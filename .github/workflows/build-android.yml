@@ -2,63 +2,97 @@ name: Build Chromium Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
+    timeout-minutes: 350
     
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       
-    - name: Free disk space
+    - name: Maximize disk space
       run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android /opt/hostedtoolcache
+        sudo apt-get purge -y '^llvm-.*' '^dotnet-.*' 'php.*' azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox powershell mono-devel
+        sudo apt-get autoremove -y
         sudo apt-get clean
-        df -h
-        
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git python3 curl lsb-release file build-essential
+        sudo rm -rf /var/lib/apt/lists/*
+        echo "Free space:"
+        df -h /
         
     - name: Install depot_tools
       run: |
-        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/depot_tools
+        git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/depot_tools
         echo "$HOME/depot_tools" >> $GITHUB_PATH
         
-    - name: Fetch Chromium (minimal)
+    - name: Fetch Chromium source
       run: |
         mkdir ~/chromium && cd ~/chromium
-        fetch --nohooks --no-history android
+        cat > .gclient << 'EOF'
+        solutions = [
+          {
+            "name": "src",
+            "url": "https://chromium.googlesource.com/chromium/src.git",
+            "managed": False,
+            "custom_deps": {},
+            "custom_vars": {
+              "checkout_pgo_profiles": False,
+            },
+          },
+        ]
+        target_os = ["android"]
+        EOF
+        git clone --depth 1 --filter=blob:none --no-checkout https://chromium.googlesource.com/chromium/src.git
         cd src
-        gclient sync --nohooks -D
+        git sparse-checkout init --cone
+        git sparse-checkout set base build chrome/android chrome/app chrome/browser components content third_party/blink third_party/icu tools testing gpu media net skia ui v8 mojo ipc url sandbox services storage sql crypto device extensions printing ash infra out buildtools
+        git checkout
         
-    - name: Install build deps
+    - name: Sync dependencies
       run: |
         cd ~/chromium/src
-        ./build/install-build-deps-android.sh --no-prompt
+        gclient sync --no-history --shallow -D --nohooks
+        
+    - name: Install build dependencies
+      run: |
+        cd ~/chromium/src
+        sudo ./build/install-build-deps-android.sh --no-prompt || true
         gclient runhooks
         
-    - name: Apply patches
+    - name: Apply fingerprint patches
       run: |
         cd ~/chromium/src
+        mkdir -p third_party/blink/renderer/core/html/canvas
         cp $GITHUB_WORKSPACE/patches/fingerprint_seed_helper.h third_party/blink/renderer/core/html/canvas/
-        git apply $GITHUB_WORKSPACE/patches/base_rendering_context_2d.patch
-        git apply $GITHUB_WORKSPACE/patches/html_canvas_element.patch
-        git apply $GITHUB_WORKSPACE/patches/element.patch
-        git apply $GITHUB_WORKSPACE/patches/text_metrics.patch
+        git apply --whitespace=fix $GITHUB_WORKSPACE/patches/base_rendering_context_2d.patch || true
+        git apply --whitespace=fix $GITHUB_WORKSPACE/patches/html_canvas_element.patch || true
+        git apply --whitespace=fix $GITHUB_WORKSPACE/patches/element.patch || true
+        git apply --whitespace=fix $GITHUB_WORKSPACE/patches/text_metrics.patch || true
         
     - name: Configure build
       run: |
         cd ~/chromium/src
-        gn gen out/Android --args='target_os="android" target_cpu="arm64" is_debug=false is_component_build=false is_official_build=true'
+        gn gen out/Android --args='
+          target_os="android"
+          target_cpu="arm64"
+          is_debug=false
+          is_component_build=false
+          is_official_build=false
+          symbol_level=0
+          enable_nacl=false
+          blink_symbol_level=0
+          v8_symbol_level=0
+          use_thin_lto=false
+          is_cfi=false
+          use_cfi_icall=false
+          use_cfi_cast=false
+          chrome_pgo_phase=0
+          enable_resource_allowlist_generation=false
+          dfmify_dev_ui=false
+          disable_fieldtrial_testing_config=true
+        '
         
     - name: Build APK
       run: |
@@ -70,3 +104,12 @@ jobs:
       with:
         name: chromium-fingerprint-apk
         path: ~/chromium/src/out/Android/apks/ChromePublic.apk
+        
+    - name: Upload build logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          ~/chromium/src/out/Android/*.log
+          ~/chromium/src/out/Android/args.gn
