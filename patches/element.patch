@@ -1,0 +1,30 @@
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index 5678cf4aab08e..5d9ac9fc520e0 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -26,6 +26,8 @@
+ 
+ #include "third_party/blink/renderer/core/dom/element.h"
+ 
++#include "third_party/blink/renderer/core/html/canvas/fingerprint_seed_helper.h"
++
+ #include <algorithm>
+ #include <bitset>
+ #include <limits>
+@@ -3427,6 +3429,16 @@ DOMRectList* Element::getClientRects() {
+     GetDocument().AdjustRectForScrollAndAbsoluteZoom(rect,
+                                                      *element_layout_object);
+   }
++  uint32_t seed = GetFingerprintSeed();
++  if (seed != 0) {
++    for (auto& rect : rects) {
++      double noise = ((seed ^ static_cast<uint32_t>(rect.width() * 1000)) % 100) * 0.00001;
++      rect.set_x(rect.x() + noise);
++      rect.set_y(rect.y() + noise);
++      rect.set_width(rect.width() + noise);
++      rect.set_height(rect.height() + noise);
++    }
++  }
+   return MakeGarbageCollected<DOMRectList>(rects);
+ }
+ 

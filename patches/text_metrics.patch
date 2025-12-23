@@ -1,0 +1,38 @@
+diff --git a/third_party/blink/renderer/core/html/canvas/text_metrics.cc b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
+index 0cc264052a4af..dde000ade21a9 100644
+--- a/third_party/blink/renderer/core/html/canvas/text_metrics.cc
++++ b/third_party/blink/renderer/core/html/canvas/text_metrics.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "third_party/blink/renderer/core/html/canvas/text_metrics.h"
+ 
++#include "third_party/blink/renderer/core/html/canvas/fingerprint_seed_helper.h"
++
+ #include "base/numerics/checked_math.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_align.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_canvas_text_baseline.h"
+@@ -141,7 +143,23 @@ void TextMetrics::Update(const Font* font,
+   const FontHeight normalized_typo_metrics =
+       font_data->NormalizedTypoAscentAndDescent();
+   em_height_ascent_ = normalized_typo_metrics.ascent - baseline_y;
+-  em_height_descent_ = normalized_typo_metrics.descent + baseline_y;
++  
++
++// Fingerprint protection
++  uint32_t seed = GetFingerprintSeed();
++  if (seed != 0) {
++    double noise = (seed % 100) * 0.00001;
++    width_ += noise;
++    actual_bounding_box_left_ += noise;
++    actual_bounding_box_right_ += noise;
++    font_bounding_box_ascent_ += noise;
++    font_bounding_box_descent_ += noise;
++    actual_bounding_box_ascent_ += noise;
++    actual_bounding_box_descent_ += noise;
++    em_height_ascent_ += noise;
++    em_height_descent_ += noise;
++  }
++em_height_descent_ = normalized_typo_metrics.descent + baseline_y;
+ 
+   // Setting baselines:
+   if (font_metrics.AlphabeticBaseline().has_value()) {

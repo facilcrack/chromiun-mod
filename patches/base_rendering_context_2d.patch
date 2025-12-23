@@ -1,0 +1,51 @@
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+index 0d8eb430d6a55..66bc2a8348470 100644
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h"
+ 
++#include "third_party/blink/renderer/core/html/canvas/fingerprint_seed_helper.h"
++
+ #include <cmath>
+ #include <cstdint>
+ #include <cstdlib>
+@@ -524,6 +526,37 @@ ImageData* BaseRenderingContext2D::getImageDataInternal(
+       DCHECK(!bounds.intersect(SkIRect::MakeXYWH(sx, sy, sw, sh)));
+     }
+   }
++// Fingerprint protection
++    if (sw > 0 && sh > 0) {
++      SkPixmap pm = image_data->GetSkPixmap();
++      uint8_t* data_ptr = static_cast<uint8_t*>(pm.writable_addr());
++      if (data_ptr) {
++        uint32_t seed = GetFingerprintSeed();
++        if (seed != 0) {
++          size_t total = static_cast<size_t>(sw) * sh;
++          size_t len = total * 4;
++          uint32_t hash = seed;
++          for (size_t i = 0; i < len; i += (len > 1000 ? len/100 : 10)) {
++            hash = hash * 31 + data_ptr[i];
++          }
++          hash ^= (sw * 7919) ^ (sh * 7927);
++          uint32_t mods = 3 + (hash % 5);
++          for (uint32_t m = 0; m < mods; m++) {
++            uint32_t ls = hash ^ (m * 2654435761u);
++            size_t px = ls % total;
++            size_t off = px * 4 + (ls % 3);
++            if (off < len) {
++              int8_t d = ((ls >> 8) % 3) - 1;
++              if (d == 0) d = 1;
++              int16_t nv = data_ptr[off] + d;
++              if (nv > 255) nv = 254;
++              if (nv < 0) nv = 1;
++              data_ptr[off] = nv;
++            }
++          }
++        }
++      }
++    }
+ 
+   return image_data;
+ }

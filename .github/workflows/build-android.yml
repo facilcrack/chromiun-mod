@@ -1,0 +1,72 @@
+name: Build Chromium Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        sudo apt-get clean
+        df -h
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git python3 curl lsb-release file build-essential
+        
+    - name: Install depot_tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/depot_tools
+        echo "$HOME/depot_tools" >> $GITHUB_PATH
+        
+    - name: Fetch Chromium (minimal)
+      run: |
+        mkdir ~/chromium && cd ~/chromium
+        fetch --nohooks --no-history android
+        cd src
+        gclient sync --nohooks -D
+        
+    - name: Install build deps
+      run: |
+        cd ~/chromium/src
+        ./build/install-build-deps-android.sh --no-prompt
+        gclient runhooks
+        
+    - name: Apply patches
+      run: |
+        cd ~/chromium/src
+        cp $GITHUB_WORKSPACE/patches/fingerprint_seed_helper.h third_party/blink/renderer/core/html/canvas/
+        git apply $GITHUB_WORKSPACE/patches/base_rendering_context_2d.patch
+        git apply $GITHUB_WORKSPACE/patches/html_canvas_element.patch
+        git apply $GITHUB_WORKSPACE/patches/element.patch
+        git apply $GITHUB_WORKSPACE/patches/text_metrics.patch
+        
+    - name: Configure build
+      run: |
+        cd ~/chromium/src
+        gn gen out/Android --args='target_os="android" target_cpu="arm64" is_debug=false is_component_build=false is_official_build=true'
+        
+    - name: Build APK
+      run: |
+        cd ~/chromium/src
+        autoninja -C out/Android chrome_public_apk
+        
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: chromium-fingerprint-apk
+        path: ~/chromium/src/out/Android/apks/ChromePublic.apk
